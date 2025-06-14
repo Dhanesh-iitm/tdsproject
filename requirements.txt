@@ -1,7 +1,10 @@
 fastapi
 uvicorn
-transformers
-torch
-Pillow
+pydantic
 requests
 beautifulsoup4
+numpy
+pillow
+python-multipart
+aiohttp
+
