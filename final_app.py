@@ -12,6 +12,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
+from rapidfuzz import fuzz
 
 EMBEDDING_URL = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -186,9 +187,9 @@ def semantic_search(question, posts, image_embedding=None, top_k_text=10):
     top_results = sorted(refined_results, key=lambda x: x[0], reverse=True)[:3]
     return top_results
 
-def find_best_markdown_match(question_embedding, folder_path="markdown_files", threshold=0.50):
+def find_best_markdown_match(question, folder_path="markdown_files", threshold=70):
     best_match = None
-    best_score = -1
+    best_score = 0
 
     for md_file in glob.glob(os.path.join(folder_path, "*.md")):
         with open(md_file, 'r', encoding='utf-8') as f:
@@ -208,15 +209,10 @@ def find_best_markdown_match(question_embedding, folder_path="markdown_files", t
         title = title_match.group(1)
         original_url = url_match.group(1)
 
-        try:
-            title_embedding = get_openai_embedding(title)
-            score = cosine_similarity(question_embedding, title_embedding)
-            if score > best_score:
-                best_score = score
-                best_match = {"url": original_url, "text": "refer above article for more details"}
-        except Exception as e:
-            print(f"Error title: {e}")
-            continue
+        score = fuzz.token_sort_ratio(question, title)
+        if score > best_score:
+            best_score = score
+            best_match = {"url": original_url, "text": f"refer to: {title}"}
 
     if best_score >= threshold:
         return best_match
@@ -256,8 +252,8 @@ def answer_question(request: QuestionRequest):
         "text": result[1]['content']
     } for result in top_results]
 
-    question_embedding = get_openai_embedding(request.question)
-    md_match = find_best_markdown_match(question_embedding)
+
+    md_match = find_best_markdown_match(request.question)
     if md_match:
         links.append(md_match)
 
