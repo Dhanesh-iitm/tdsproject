@@ -11,7 +11,7 @@ import re
 import base64
 from io import BytesIO
 from PIL import Image
-
+from fastapi.middleware.cors import CORSMiddleware
 
 EMBEDDING_URL = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -21,6 +21,14 @@ JINA_API_KEY = os.environ.get("JINA_API_KEY")
 JINA_EMBEDDING_URL = "https://api.jina.ai/v1/embeddings"
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or specify your exam portal domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class QuestionRequest(BaseModel):
     question: str
