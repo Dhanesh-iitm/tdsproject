@@ -7,4 +7,9 @@ numpy
 pillow
 python-multipart
 aiohttp
+rapidfuzz
+spacy
+PyYAML
+jsonschema
+openai
 

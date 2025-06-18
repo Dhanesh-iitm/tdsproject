@@ -12,27 +12,19 @@ import base64
 from io import BytesIO
 from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
-from rapidfuzz import fuzz
-import string
-import spacy
-import openai
-
-nlp = spacy.load("en_core_web_sm")
 
 EMBEDDING_URL = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-3-small"
 API_KEY = os.environ.get("API_KEY")
-JINA_API_KEY = "jina_ea7a5633e1434426b44c98fe0f0abdc3b1WqqCxKuougEsch7W2i0-CElX_J"
+
+JINA_API_KEY = os.environ.get("JINA_API_KEY")
 JINA_EMBEDDING_URL = "https://api.jina.ai/v1/embeddings"
 
-openai.api_key = API_KEY
-openai.api_base = "http://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
-
-
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Or specify your exam portal domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,40 +38,6 @@ class AnswerResponse(BaseModel):
     answer: str
     links: List[dict]
 
-
-from openai import OpenAI
-
-# Initialize the OpenAI client with proxy settings
-client = OpenAI(
-    api_key=API_KEY,
-    base_url="http://aiproxy.sanand.workers.dev/openai/v1"
-)
-
-def generate_summary_from_posts(posts):
-    combined_text = "\n\n".join([post['content'] for _, post in posts])
-
-    prompt = (
-        "You are an academic course assistant. Based on the following forum posts, provide an recommendation which would student give direction or suggestion for student what to do"
-        "Keep it under 2 sentences & think like you are course professor & no need to go very great technical depth\n\n"
-        f"{combined_text}\n\n"
-        "Recommendation:"
-    )
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4,
-            max_tokens=200
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"LLM API error: {e}")
-        return posts[0][1]['content']
-
-
-
-# My previous functions here
 def get_openai_embedding(text: str):
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -203,7 +161,7 @@ def semantic_search(question, posts, image_embedding=None, top_k_text=10):
     top_text_results = text_ranked[:top_k_text]
 
     if image_embedding is None:
-        return top_text_results[:4]
+        return top_text_results[:3]
 
     refined_results = []
     for score, post in top_text_results:
@@ -225,25 +183,12 @@ def semantic_search(question, posts, image_embedding=None, top_k_text=10):
 
         refined_results.append((combined_score, post))
 
-    top_results = sorted(refined_results, key=lambda x: x[0], reverse=True)[:4]
+    top_results = sorted(refined_results, key=lambda x: x[0], reverse=True)[:3]
     return top_results
 
-def preprocess(text):
-    doc = nlp(text.lower())
-    tokens = [
-        token.lemma_ for token in doc
-        if not token.is_stop and not token.is_punct and not token.is_space
-    ]
-    return ' '.join(tokens)
-
-# ... [All your existing helper functions remain unchanged] ...
-
-
-
-def find_best_markdown_match(question, folder_path="markdown_files", threshold=30):
+def find_best_markdown_match(question_embedding, folder_path="markdown_files", threshold=0.50):
     best_match = None
-    best_score = 0
-    processed_question = preprocess(question)
+    best_score = -1
 
     for md_file in glob.glob(os.path.join(folder_path, "*.md")):
         with open(md_file, 'r', encoding='utf-8') as f:
@@ -262,25 +207,25 @@ def find_best_markdown_match(question, folder_path="markdown_files", threshold=3
 
         title = title_match.group(1)
         original_url = url_match.group(1)
-        processed_title = preprocess(title)
 
-        # Combine multiple fuzzy scores
-        score1 = fuzz.token_set_ratio(processed_question, processed_title)
-        score2 = fuzz.partial_ratio(processed_question, processed_title)
-        score = max(score1, score2)
-
-        if score > best_score:
-            best_score = score
-            best_match = {"url": original_url, "text": f"refer to: {title}"}
+        try:
+            title_embedding = get_openai_embedding(title)
+            score = cosine_similarity(question_embedding, title_embedding)
+            if score > best_score:
+                best_score = score
+                best_match = {"url": original_url, "text": "refer above article for more details"}
+        except Exception as e:
+            print(f"Error title: {e}")
+            continue
 
     if best_score >= threshold:
         return best_match
     return None
 
-
 @app.post("/api/", response_model=AnswerResponse)
 def answer_question(request: QuestionRequest):
     image_embeddings = []
+
     if request.attachments:
         for item in request.attachments:
             try:
@@ -292,6 +237,7 @@ def answer_question(request: QuestionRequest):
                     image_embeddings.append(emb)
             except Exception as e:
                 print(f": {e}")
+
     image_embedding = None
     if image_embeddings:
         image_embedding = np.mean(image_embeddings, axis=0)
@@ -304,13 +250,14 @@ def answer_question(request: QuestionRequest):
     if not top_results:
         return AnswerResponse(answer="No posts.", links=[])
 
-    answer = generate_summary_from_posts(top_results)
+    answer = top_results[0][1]['content']
     links = [{
         "url": result[1]['post_url'],
         "text": result[1]['content']
     } for result in top_results]
 
-    md_match = find_best_markdown_match(request.question)
+    question_embedding = get_openai_embedding(request.question)
+    md_match = find_best_markdown_match(question_embedding)
     if md_match:
         links.append(md_match)
 
